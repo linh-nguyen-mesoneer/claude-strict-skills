@@ -1,0 +1,159 @@
+#!/usr/bin/env bash
+# Build a review package: commit list, stat summary, and the full diff with
+# extended context, written to one file the reviewer reads in a single call.
+#
+# By default the package covers the whole change since the branch left the
+# default branch: commits, staged and unstaged edits, and untracked files.
+# Reviewing only BASE..HEAD silently drops uncommitted work, and HEAD~1 drops
+# all but the last commit.
+#
+# Usage: review-package [--base REF] [--head REF] [--out FILE] [-- PATHSPEC...]
+#   --base REF   compare against merge-base(REF, tip); default: the default
+#                branch (origin/HEAD, origin/main, origin/master, main, master)
+#   --head REF   review commits up to REF only; the working tree is excluded
+#   --out FILE   write here; default: a fresh file under $TMPDIR, outside the repo
+#   PATHSPEC     limit the package (relative to the repo root)
+#
+# Exit codes: 0 package written, 2 usage or git error, 3 nothing to review.
+# Never touches the working tree, the index, or any ref.
+set -euo pipefail
+
+readonly CONTEXT_LINES=10
+readonly EXIT_USAGE=2
+readonly EXIT_EMPTY=3
+
+die() {
+  echo "review-package: $1" >&2
+  exit "$EXIT_USAGE"
+}
+
+usage() {
+  echo "usage: review-package [--base REF] [--head REF] [--out FILE] [-- PATHSPEC...]" >&2
+  exit "$EXIT_USAGE"
+}
+
+base_ref=""
+head_ref=""
+out=""
+pathspecs=()
+
+while [ $# -gt 0 ]; do
+  case $1 in
+    --base | --head | --out)
+      [ $# -ge 2 ] || usage
+      case $1 in
+        --base) base_ref=$2 ;;
+        --head) head_ref=$2 ;;
+        --out) out=$2 ;;
+      esac
+      shift 2
+      ;;
+    --)
+      shift
+      pathspecs=("$@")
+      break
+      ;;
+    *) usage ;;
+  esac
+done
+
+root=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository"
+cd "$root"
+
+resolve_commit() {
+  git rev-parse --verify --quiet "$1^{commit}" 2>/dev/null
+}
+
+default_base_ref() {
+  local remote_head candidate
+  remote_head=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)
+  for candidate in $remote_head origin/main origin/master main master; do
+    if resolve_commit "$candidate" >/dev/null; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+tip_ref=${head_ref:-HEAD}
+tip_sha=$(resolve_commit "$tip_ref") || die "bad --head: $tip_ref"
+
+if [ -z "$base_ref" ]; then
+  base_ref=$(default_base_ref) || die "no default branch found; pass --base REF"
+fi
+resolve_commit "$base_ref" >/dev/null || die "bad --base: $base_ref"
+base_sha=$(git merge-base "$base_ref" "$tip_sha") || die "no common ancestor of $base_ref and $tip_ref"
+
+# With --head the review is commits only; otherwise it ends at the working tree.
+if [ -n "$head_ref" ]; then
+  diff_range=("$base_sha" "$tip_sha")
+  scope="commits only (working tree excluded)"
+else
+  diff_range=("$base_sha")
+  scope="commits + staged + unstaged + untracked"
+fi
+
+# bash 3.2 (macOS) treats an empty array as unset under `set -u`.
+diff_tracked() {
+  git diff --no-ext-diff --no-color "$@" "${diff_range[@]}" -- ${pathspecs[@]+"${pathspecs[@]}"}
+}
+
+untracked=()
+if [ -z "$head_ref" ]; then
+  while IFS= read -r -d '' path; do
+    untracked+=("$path")
+  done < <(git ls-files --others --exclude-standard -z -- ${pathspecs[@]+"${pathspecs[@]}"})
+fi
+
+if diff_tracked --quiet && [ "${#untracked[@]}" -eq 0 ]; then
+  echo "review-package: nothing to review against $(git rev-parse --short "$base_sha") ($base_ref); check the base" >&2
+  exit "$EXIT_EMPTY"
+fi
+
+if [ -z "$out" ]; then
+  tmp_root=${TMPDIR:-/tmp}
+  out="$(mktemp -d "${tmp_root%/}/review-package.XXXXXX")/review.diff"
+fi
+
+diff_untracked() {
+  local path status
+  for path in ${untracked[@]+"${untracked[@]}"}; do
+    if [ ! -f "$path" ] || [ -L "$path" ]; then
+      echo "(skipped, not a regular file: $path)"
+      continue
+    fi
+    # --no-index exits 1 when the files differ, which is always the case here.
+    status=0
+    git diff --no-ext-diff --no-color --no-index -U"$CONTEXT_LINES" -- /dev/null "$path" || status=$?
+    [ "$status" -le 1 ] || die "git diff failed for untracked file: $path"
+  done
+}
+
+{
+  echo "# Review package"
+  echo "Base: $base_sha ($base_ref)"
+  echo "Tip: $tip_sha ($tip_ref)"
+  echo "Scope: $scope"
+  [ "${#pathspecs[@]}" -eq 0 ] || echo "Pathspecs: ${pathspecs[*]}"
+  echo
+  echo "## Commits"
+  git log --oneline "${base_sha}..${tip_sha}" -- ${pathspecs[@]+"${pathspecs[@]}"}
+  echo
+  echo "## Files changed"
+  diff_tracked --stat
+  if [ "${#untracked[@]}" -gt 0 ]; then
+    echo
+    echo "## Untracked files"
+    printf '%s\n' "${untracked[@]}"
+  fi
+  echo
+  echo "## Diff"
+  diff_tracked -U"$CONTEXT_LINES"
+  diff_untracked
+} >"$out"
+
+commits=$(git rev-list --count "${base_sha}..${tip_sha}")
+tracked=$(diff_tracked --name-only | wc -l | tr -d ' ')
+bytes=$(wc -c <"$out" | tr -d ' ')
+echo "wrote ${out}: base $(git rev-parse --short "$base_sha"), ${commits} commit(s), ${tracked} tracked file(s), ${#untracked[@]} untracked, ${bytes} bytes"

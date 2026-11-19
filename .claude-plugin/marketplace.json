@@ -1,0 +1,14 @@
+{
+  "name": "strict-skills",
+  "owner": {
+    "name": "Matrix-I"
+  },
+  "description": "Strict plan/execute/review/finish skills for Claude Code.",
+  "plugins": [
+    {
+      "name": "strict-workflow",
+      "source": "./plugins/strict-workflow",
+      "description": "Plan → execute → review → finish workflow with TDD, integration tests, independent opus review, and explicit approval gates."
+    }
+  ]
+}
