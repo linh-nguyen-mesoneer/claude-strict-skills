@@ -13,7 +13,7 @@ Claude Code plugin `strict-workflow`: plan → execute → review → finish.
 ## Install
 
 ```
-/plugin marketplace add <git-url-or-path-of-this-repo>
+/plugin marketplace add linh-nguyen-mesoneer/claude-strict-skills
 /plugin install strict-workflow@strict-skills
 ```
 
