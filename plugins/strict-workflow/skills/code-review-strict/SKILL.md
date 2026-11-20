@@ -8,7 +8,7 @@ description: Use when a non-trivial change is finished and needs an independent 
 Hand an independent reviewer the whole change, the requirements, and the project rules, then check what comes back before acting on it. A reviewer given a partial diff approves code it never read.
 
 **Announce:** "I'm using the code-review-strict skill to get an independent review."
-**Precedence:** user > project `CLAUDE.md`/`AGENTS.md` > this skill.
+**Precedence:** user > project `CLAUDE.md`/`AGENTS.md` > global `CLAUDE.md` > this skill.
 **Used for:** any independent review, including the final whole-branch review of `subagent-driven-strict` (its per-task reviews use their own template).
 
 ## 1. Verify First
@@ -27,13 +27,13 @@ Run `scripts/review-package` (in this skill's directory) from inside the repo. I
 | One subsystem | `review-package -- <pathspec>...` |
 
 - **Exit 3 (nothing to review):** the base is wrong. Correct it; dispatch nothing.
-- **Package over ~150 KB:** build one package per subsystem with pathspecs and dispatch one reviewer each. Every changed path belongs to exactly one package.
+- **Package over ~150 KB:** build one package per subsystem with pathspecs and dispatch one reviewer each. Every changed path belongs to exactly one package. Splitting hides contracts between slices, so fill each reviewer's **Other packages** slot with the other package paths; then check every cross-package contract they list against the package on the other side (or dispatch one reviewer with just those contracts and both sides' packages).
 
 ## 3. Dispatch
 
 Fill every slot of `code-reviewer-prompt.md` (this directory).
 
-- **Requirements:** the plan or spec path, or the user's request quoted verbatim.
+- **Requirements:** the source requirements (ticket text with acceptance criteria and Approach, or the user's request, verbatim) **and** the plan path. The plan is the author's reading of the ticket; a reviewer given only the plan approves a plan that was too narrow.
 - **Rule files:** project and user rule files (`CLAUDE.md`, `AGENTS.md`, contributing docs).
 - **Model:** always `opus`, named explicitly.
 
@@ -41,14 +41,15 @@ Fill every slot of `code-reviewer-prompt.md` (this directory).
 
 Findings are claims to verify, not orders. Read the whole report before fixing anything; if any item is unclear, settle it before touching code, since items are often related. No performative agreement: state the technical verdict, then act.
 
-Open the `file:line` of every Critical and Important finding and check its failure scenario against the code. Also check whether a fix would break existing behavior or callers, and whether it conflicts with the requirements or project rules (that conflict goes to the user).
+Re-rate every finding against the rule files: one that breaks a mandatory rule (e.g. changed behavior with no test that can fail) is at least Important, whatever the reviewer called it. Open the `file:line` of every Critical and Important finding and check its failure scenario against the code. Also check whether a fix would break existing behavior or callers, and whether it conflicts with the requirements or project rules (that conflict goes to the user).
 
 | Finding turns out | Action |
 |---|---|
 | Real | Fix it. A bug gets a failing test first. |
 | Wrong | Reject it, citing the code that disproves it. |
 | Plausible, untraced | Run the check the reviewer named, then decide. |
-| Minor or out of scope | List it for the user; leave the code alone. |
+| Minor | List it for the user; leave the code alone. |
+| Real but out of scope | Not a silent follow-up: the user decides fix-now or follow-up. A follow-up needs a ticket and a line in the PR description before the PR opens; a gap that only lives in the chat report comes back as a review comment. |
 
 ## 5. Re-review
 
@@ -67,6 +68,8 @@ State: the final verdict and number of rounds; findings fixed (finding â†’ fix â
 | `HEAD~1` as the base | Script default (merge-base with the default branch), or a SHA recorded before the work began |
 | Reviewing `BASE..HEAD` while the work is uncommitted | Default mode, which includes the working tree |
 | Paraphrasing the requirements | Path or verbatim quote |
+| Passing only the plan as requirements | Ticket or request verbatim, plus the plan |
+| Calling a known gap "follow-up" in the report only | Ticket + PR description line, or fix it now |
 | Applying every finding as written | Triage each against the code first |
 | Skipping re-review because the fix was small | A fix is a change; re-review it |
-| Omitting the model | Pass `model: opus`; an omitted model falls back to `CLAUDE_CODE_SUBAGENT_MODEL` (sonnet) |
+| Omitting the model | Pass `model: opus`; an omitted model falls back to the agent definition's model, else the configured default subagent model (e.g. `CLAUDE_CODE_SUBAGENT_MODEL`), else the caller's model |

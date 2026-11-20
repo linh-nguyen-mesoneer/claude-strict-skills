@@ -13,12 +13,12 @@ You are the controller. Per task: one fresh implementer subagent, then one task 
 
 ## Step 0: Workspace
 
-1. **Branch:** never implement on `main`/`master`. Create the branch the plan names (or `feature|fix|chore/<short-desc>`) from the latest `origin/<base>`. For isolation, use a worktree: `git worktree add ../<repo>-<branch> -b <branch> origin/<base>`, then work only inside it.
+1. **Branch:** never implement on `main`/`master`. Create the branch the plan names (or `feature|fix|chore/<short-desc>`) from the latest `origin/<base>`. For isolation, use a worktree: `git worktree add ../<repo>-<branch> -b <branch> origin/<base>`, then work only inside it. The plan file must live on that branch: if it is untracked in the main checkout, copy it into the worktree at the same path and use only that copy from then on.
 2. **Clean start:** the working tree is clean, or its changes belong to this plan.
 3. **Baseline:** run the project's test suite (integration tests included) before Task 1. Failing baseline → report and ask; never build on red.
 4. **Commits:** the global rule is "commit only when asked". Ask once: "Commit per task on `<branch>`?" (one question, before Task 1).
    - **Yes:** implementers commit per task in the project's format; per-task diffs are `BASE..HEAD`.
-   - **No:** implementers do not commit. After a task's review is clean, you run `git add -A` (staging is the checkpoint, not a commit); per-task diffs are the unstaged and untracked changes (see Review package).
+   - **No:** implementers do not commit. After a task's review is clean, you stage exactly the reviewed paths (staging is the checkpoint, not a commit; see Close the task); per-task diffs are the unstaged and untracked changes (see Review package).
 5. **Workspace dir:** `bash <this skill>/scripts/task-brief` creates `<repo>/.sdd/` (self-ignored) for briefs, reports, packages, and the ledger.
 
 ## Step 1: Load and Pre-flight
@@ -38,7 +38,7 @@ You are the controller. Per task: one fresh implementer subagent, then one task 
 
 | Status | Action |
 |---|---|
-| DONE | Check the report has RED and GREEN evidence, the commands, and (for a boundary task) integration-test results. Missing any → send back. Then review. |
+| DONE | Check the report has RED (or the behavior-preserving before-run, or for a `no executable behavior` task its named check) and GREEN evidence, the commands, and (for a boundary task) integration-test results. Missing any → send back. Then check it yourself: (a) commit mode: `git status --porcelain` lists nothing but the plan file (your ticks) and `HEAD` moved past BASE, else uncommitted work would escape the review → send back; (b) re-run the report's GREEN command(s), integration tests included (no GREEN command → re-run the named check); a result that differs from the report → send back with both outputs. Running tests is not writing code. Then review. |
 | DONE_WITH_CONCERNS | Correctness or scope concerns → resolve before review. Observations → note them in the ledger, then review. |
 | NEEDS_CONTEXT | Supply the missing context; re-dispatch. |
 | BLOCKED | Context problem → more context. Too hard → re-dispatch on `opus`. Too big → split. Plan wrong → ask the user. Never retry unchanged. |
@@ -46,11 +46,11 @@ You are the controller. Per task: one fresh implementer subagent, then one task 
 5. **Review package:** with commits, `bash <code-review-strict>/scripts/review-package --base <BASE> --head HEAD`. Without commits, write to `<repo>/.sdd/task-<N>-package.md`: `git diff --stat`, `git diff -U10`, and for each `git ls-files --others --exclude-standard` file, `git diff --no-index -U10 /dev/null <file>`. Never read the package yourself.
 6. **Dispatch the task reviewer** with `task-reviewer-prompt.md`, model **`opus`**, always explicit.
 7. **Act on the verdict:**
-   - Critical or Important → one fix dispatch (implementer template, same brief, the full findings list, the covering test files named); the fixer appends test results to the report. Re-review. At most 3 rounds, then ask the user.
+   - Critical or Important → one fix dispatch (implementer template, same brief, the full findings list, the covering test files named); the fixer appends test results to the report. Its status goes through step 4 again (checks a and b included), then step 5 rebuilds the package; re-review. At most 3 rounds, then ask the user.
    - ⚠️ cannot-verify items → check each yourself against the plan and the code; a real gap is a failed review.
    - A finding that conflicts with the plan's text → ask the user which governs; never dismiss it and never fix against the plan silently.
    - Minor → record in the ledger for the final review.
-8. **Close the task:** (no-commit mode: `git add -A`), mark it `- [x]` in the plan, append to the ledger: `Task N: complete (<base7>..<head7> | staged), review clean, Minor: <list | none>`.
+8. **Close the task:** tick all the task's steps `- [x]` in the plan. No-commit mode: compare `git status --porcelain` with the files in the reviewed package and stage exactly those plus the plan file (`git add -- <paths>`); never `git add -A`. A path the review never saw (build output, logs, a `.env` written by tests) stays unstaged: remove it via a fix dispatch if the task created it by mistake, otherwise ask. Commit mode: leave the ticks uncommitted (implementers never touch the plan file); they are committed with the branch at the end. Append to the ledger: `Task N: complete (<base7>..<head7> | staged), review clean, Minor: <list | none>`.
 
 Run tasks one at a time, never two implementers in parallel. Do not stop between tasks to ask "continue?"; stop only for a question, a blocker, or a plan conflict.
 
@@ -70,7 +70,7 @@ Unverified: <gap and why | none>
 Follow-ups: <Minor and out-of-scope items | none>
 ```
 
-5. Then `finishing-branch-strict`.
+5. Plan file: commit mode → commit it with its ticks (`git add -- <plan>`, project format); no-commit mode → it is already staged. Then `finishing-branch-strict`.
 
 ## Dispatch Rules
 
@@ -88,3 +88,5 @@ Follow-ups: <Minor and out-of-scope items | none>
 | "Implementer self-review is enough" | Self-review never replaces the task review. |
 | "The finding is plan-mandated, skip it" | Plan conflicts go to the user. |
 | "Compaction happened, I'll redo Task 1" | Read the ledger and `git log` first. |
+| "The report says GREEN, no need to run it" | Re-run the GREEN commands; reports are claims. |
+| "`git add -A` is quicker" | Stage only reviewed paths; stray files may be secrets. |

@@ -20,7 +20,7 @@ Subagent (general-purpose):
     1. Read the brief, the constraints, and the rule files.
     2. Read the package once, in full; it is your view of the change. Do not re-derive it with git.
     3. Read code outside the diff only to settle a risk you can name (changed contract → callers; changed lock order or shared state → other users). Record each such check.
-    4. The report's test evidence covers this code; do not re-run suites. Run one focused test only for a specific doubt. Missing RED/GREEN evidence, missing integration-test results for a boundary task, or noisy output is a finding.
+    4. The report's test evidence covers this code; do not re-run suites. Run one focused test only for a specific doubt. Missing RED/GREEN evidence, missing integration-test results for a boundary task, or noisy output is a finding. A task the brief marks `RED: n/a — behavior-preserving` needs instead the named covering tests passing before and after; one marked `RED: n/a — no executable behavior` needs its named check run. Any observable behavior change under either label is Critical.
     5. A stated rationale ("kept it simple", "per YAGNI") never lowers severity.
 
     ## Checks

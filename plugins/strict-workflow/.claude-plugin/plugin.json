@@ -1,6 +1,6 @@
 {
   "name": "strict-workflow",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Plan → execute → review → finish workflow with TDD, integration tests, independent opus review, and explicit approval gates.",
   "author": { "name": "Matrix-I" }
 }

@@ -6,7 +6,9 @@
 set -euo pipefail
 
 script_dir=$(cd "$(dirname "$0")" && pwd)
+# Deployed name, or the chezmoi source name when run from the dotfiles repo.
 pkg="$script_dir/review-package"
+[ -e "$pkg" ] || pkg="$script_dir/executable_review-package"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
@@ -37,7 +39,7 @@ assert_eq() {
 # Runs review-package and echoes its exit code; output goes to $work/last.out.
 exit_code_of() {
   local code=0
-  "$pkg" "$@" >"$work/last.out" 2>&1 || code=$?
+  bash "$pkg" "$@" >"$work/last.out" 2>&1 || code=$?
   echo "$code"
 }
 
@@ -75,7 +77,7 @@ test_default_includes_whole_change() {
   new_feature_repo whole
   local out="$work/whole.diff" before after summary
   before=$(git status --porcelain)
-  summary=$("$pkg" --out "$out")
+  summary=$(bash "$pkg" --out "$out")
   after=$(git status --porcelain)
 
   for marker in first-commit second-commit staged unstaged untracked spaced sub; do
@@ -92,7 +94,7 @@ test_default_includes_whole_change() {
 test_default_outfile_is_outside_repo() {
   new_feature_repo outfile
   local summary path
-  summary=$("$pkg")
+  summary=$(bash "$pkg")
   path=${summary#wrote }
   path=${path%%: base*}
   [ -s "$path" ] || fail "default outfile exists and is non-empty: '$path'"
@@ -106,7 +108,7 @@ test_default_outfile_is_outside_repo() {
 test_pathspec_limits_package() {
   new_feature_repo pathspec
   local out="$work/pathspec.diff"
-  "$pkg" --out "$out" -- sub >/dev/null
+  bash "$pkg" --out "$out" -- sub >/dev/null
   assert_contains "$out" "sub-marker" "pathspec keeps matching untracked file"
   assert_not_contains "$out" "first-commit-marker" "pathspec drops other commits"
   assert_not_contains "$out" "untracked-marker" "pathspec drops other untracked files"
@@ -115,7 +117,7 @@ test_pathspec_limits_package() {
 test_head_excludes_working_tree() {
   new_feature_repo head
   local out="$work/head.diff"
-  "$pkg" --head HEAD --out "$out" >/dev/null
+  bash "$pkg" --head HEAD --out "$out" >/dev/null
   assert_contains "$out" "first-commit-marker" "--head keeps commits"
   assert_contains "$out" "second-commit-marker" "--head keeps commits"
   assert_not_contains "$out" "staged-marker" "--head drops staged changes"
@@ -125,7 +127,7 @@ test_head_excludes_working_tree() {
 test_explicit_base_narrows_range() {
   new_feature_repo base
   local out="$work/base.diff"
-  "$pkg" --base HEAD~1 --head HEAD --out "$out" >/dev/null
+  bash "$pkg" --base HEAD~1 --head HEAD --out "$out" >/dev/null
   assert_contains "$out" "second-commit-marker" "--base keeps later commit"
   assert_not_contains "$out" "first-commit-marker" "--base drops earlier commit"
 }

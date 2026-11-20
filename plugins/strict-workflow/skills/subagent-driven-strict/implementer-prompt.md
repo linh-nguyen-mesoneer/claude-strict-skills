@@ -23,17 +23,20 @@ Subagent (general-purpose):
     Unclear requirement, approach, or assumption → stop now and report NEEDS_CONTEXT with the exact question. Never guess a business rule.
 
     ## Do
-    1. Test first: write the failing test from the brief, run it, and confirm it fails for the expected reason (RED).
+    1. Test first: write the failing test from the brief, run it, and confirm it fails for the expected reason (RED). If the brief says `RED: n/a — behavior-preserving`: run the named covering tests before changing anything (all must pass), and report that run in place of RED; if it says `RED: n/a — no executable behavior`, run the named check after the change instead. Never invent a failing test.
     2. Implement the minimum to pass; run it (GREEN).
     3. If the task touches a real boundary (DB, HTTP, broker, file system, external API): an integration test against the real resource (e.g. Testcontainers) must exist and pass, run with a command that executes it (e.g. `mvn verify -pl <module>`; `mvn test` skips `*IT` classes).
     4. Before finishing, run the full suite of the affected module plus build/lint/typecheck. Output must be clean (no new warnings).
     5. Self-review against the rule files: requirements, edge cases, error paths, scope (nothing extra), naming, no deprecated APIs, no debug output or TODOs.
     6. Commit only if the Commits line says so.
 
+    ## Never
+    Push, pull, merge, rebase, reset, stash, amend, cherry-pick, or switch/check out branches; stage with `git commit -a`, `git add -A`, or `git add .` (stage your files by path); edit the plan file or anything under `.sdd/` other than your report; add, remove, or upgrade dependencies the brief does not name; touch files outside the brief's Files list without reporting why. Needing any of these → BLOCKED with the reason.
+
     Never weaken, skip, or delete a test to pass. Do not restructure code outside the task. A file growing beyond the plan's intent, or a design choice the brief does not settle → DONE_WITH_CONCERNS or BLOCKED, not your own redesign.
 
     ## Report
-    Write to [REPORT_FILE] (append in fix rounds): what you built; files changed; RED (command, failing output, why expected); GREEN (command, passing output); integration tests (command, counts | "not a boundary task"); full-suite command and result; self-review findings; concerns.
+    Write to [REPORT_FILE] (append in fix rounds): what you built; files changed; RED (command, failing output, why expected; or the behavior-preserving before-run, or the no-executable-behavior check); GREEN (command, passing output); integration tests (command, counts | "not a boundary task"); full-suite command and result; self-review findings; concerns.
 
     Final message, under 15 lines:
     - **Status:** DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED

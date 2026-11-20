@@ -30,14 +30,252 @@ mkdir -p "$dir"
 printf '*\n' > "$dir/.gitignore"
 out="$dir/task-${n}-brief.md"
 
-# A task runs from its "Task N" heading to the next "Task M" heading,
-# ignoring headings inside fenced code blocks.
+# A task runs from its "Task N" heading to the next "Task M" heading, or to
+# the next other heading at the same or a higher level (e.g. a trailing
+# "## Appendix"), so the last task does not swallow what follows it.
+# Deeper headings (steps) stay in the task. Blocks follow CommonMark:
+# - Containers: block quotes ("> ") and list items ("- ", "1. "). A line
+#   stays in a list item while indented to its content; a paragraph may
+#   continue lazily without the markers. Headings inside containers count.
+# - ATX headings: 1-6 "#" indented up to 3 spaces, then a space or the end
+#   of the line ("##" alone is an empty heading; "#######" is text).
+# - Setext headings: a paragraph underlined by "=" (level 1) or "-" (level
+#   2). A "---" with no paragraph above it is a thematic break.
+# - Nothing inside a fenced code block, an indented code block (4+ spaces),
+#   or an HTML block is a heading. Table rows ("|") are not paragraphs.
+# Fences: a run of 3+ backticks or tildes, indented up to 3 spaces, opens
+# one; only a run of the same character, at least as long and with nothing
+# after it, closes it. So a ````markdown fence can hold ```bash examples
+# whose "# comment" lines are not headings. A backtick run with another
+# backtick later on the line opens nothing. Unlike CommonMark, a fence in a
+# list item stays open on lines indented less than the item, so a fence
+# whose body was not indented never ends the task early.
 awk -v n="$n" '
-  /^```/ { infence = !infence }
-  !infence && /^#+[ \t]+Task[ \t]+[0-9]+/ {
-    intask = ($0 ~ ("^#+[ \t]+Task[ \t]+" n "([^0-9]|$)"))
+  # Tabs become spaces at tab stops of 4, so indentation is a count.
+  function expand(s,   out, i, c) {
+    if (!index(s, "\t")) return s
+    out = ""
+    for (i = 1; i <= length(s); i++) {
+      c = substr(s, i, 1)
+      if (c != "\t") out = out c
+      else do { out = out " " } while (length(out) % 4)
+    }
+    return out
   }
-  intask { print }
+  # Sets run_char/run_len/run_rest for the leading fence run of a line
+  # (run_len is 0 when the line does not start with 3+ backticks or tildes).
+  function fence_run(line,   p, k) {
+    run_len = 0
+    p = match(line, /[^ ]/)
+    if (!p || p > 4) return
+    run_char = substr(line, p, 1)
+    if (run_char != "`" && run_char != "~") return
+    k = p
+    while (substr(line, k, 1) == run_char) k++
+    if (k - p < 3) return
+    run_rest = substr(line, k)
+    # CommonMark: a backtick run followed by another backtick is inline
+    # code (e.g. ```js```), not a fence. Tilde info strings may hold them.
+    if (run_char == "`" && index(run_rest, "`")) return
+    run_len = k - p
+  }
+  # Returns the end pattern of the HTML block that line h starts, or "".
+  # Kinds 1-5 end at a line matching their closer; 6 (block-level tags)
+  # and 7 (a lone complete tag, which cannot interrupt a paragraph) end at
+  # a blank line.
+  function html_start(h, in_para,   l) {
+    l = tolower(h)
+    if (l ~ /^<(pre|script|style|textarea)([ >]|$)/)
+      return "</(pre|script|style|textarea)>"
+    if (h ~ /^<!--/) return "-->"
+    if (h ~ /^<\?/) return "[?]>"
+    if (h ~ /^<!\[CDATA\[/) return "]]>"
+    if (h ~ /^<![A-Za-z]/) return ">"
+    if (l ~ ("^</?(" html6 ")([ >]|/>|$)")) return "^ *$"
+    if (!in_para && (l ~ /^<[a-z][a-z0-9-]*( +[^<>]*)?\/?> *$/ ||
+                     l ~ /^<\/[a-z][a-z0-9-]* *> *$/))
+      return "^ *$"
+    return ""
+  }
+  function thematic(h,   t) {
+    t = h
+    gsub(/ /, "", t)
+    return h ~ /^[^ ]/ && t ~ /^(\*\*\*+|___+|---+)$/
+  }
+  # Strips up to 3 spaces of indentation.
+  function dedent(r,   h) {
+    h = r
+    sub(/^ ? ? ?/, "", h)
+    return h
+  }
+  # Lines that end an open paragraph instead of continuing it.
+  function interrupts(r,   h) {
+    h = dedent(r)
+    if (h ~ /^ *$/ || h ~ /^##?#?#?#?#?( |$)/ || h ~ /^>/) return 1
+    if (thematic(h) || h ~ /^[-+*] +[^ ]/ || h ~ /^1[.)] +[^ ]/) return 1
+    fence_run(r)
+    return run_len || html_start(h, 1) != ""
+  }
+  # Returns the content width of the list item that r starts, or 0, and
+  # sets li_rest (its first line of content), li_empty, and li_one (a
+  # bullet or an item numbered 1, which may interrupt a paragraph).
+  function list_item(r,   i, k, s, rest) {
+    match(r, /^ */)
+    i = RLENGTH
+    if (i > 3 || thematic(dedent(r))) return 0
+    rest = substr(r, i + 1)
+    if (rest ~ /^[-+*]/) { k = 1; li_one = 1 }
+    else if (match(rest, /^[0-9]+[.)]/) && RLENGTH <= 10) {
+      k = RLENGTH
+      li_one = rest ~ /^1[.)]/
+    } else return 0
+    rest = substr(rest, k + 1)
+    li_empty = rest ~ /^ *$/
+    if (li_empty) { li_rest = ""; return i + k + 1 }
+    if (rest !~ /^ /) return 0
+    match(rest, /^ */)
+    s = RLENGTH
+    # Five or more spaces: one belongs to the marker, the rest make code.
+    if (s >= 5) { li_rest = substr(rest, 2); return i + k + 1 }
+    li_rest = substr(rest, s + 1)
+    return i + k + s
+  }
+  function emit(line) { if (intask) print line }
+  function close_leaf(   i) {
+    for (i = 1; i <= para_n; i++) emit(para[i])
+    para_n = 0
+    leaf = ""
+  }
+  # The task number ends at the end of the title, a space, a tab, ":",
+  # ")", an en or em dash, or a ".", ",", or "-" followed by one of those.
+  # So "Task 1.5", "Task 1a", "Task 1/2", "Task 1é" are task headings, but
+  # not task 1; "Task 1: x", "Task 1, x", "Task 1) x", "Task 1— x" are.
+  function heading(title, level,   sep) {
+    if (title ~ /^Task[ ]+[0-9]+/) {
+      sep = "[ :)]|\342\200\223|\342\200\224"
+      intask = (title ~ ("^Task +" n "($|" sep "|[.,-]($|" sep "))"))
+      tasklevel = level
+    } else if (intask && level <= tasklevel) {
+      intask = 0
+    }
+  }
+  BEGIN {
+    html6 = "address|article|aside|base|basefont|blockquote|body|caption|" \
+      "center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|" \
+      "figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|" \
+      "html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|" \
+      "optgroup|option|p|param|search|section|summary|table|tbody|td|" \
+      "tfoot|th|thead|title|tr|track|ul"
+  }
+  # Each line is parsed as r (CRLF plans lose the CR, tabs become spaces)
+  # and printed as $0, unchanged. depth containers are open: ctype[i] is
+  # "q" (quote) or "l" (list item of content width cw[i]). leaf is the
+  # open block in the innermost one: "para", "fence", or "html". Indented
+  # code needs no state: its lines start no paragraph and hold no heading.
+  {
+    r = $0
+    sub(/\r$/, "", r)
+    r = expand(r)
+    # 1. Strip the markers of the containers this line continues.
+    for (m = 0; m < depth; m++) {
+      if (ctype[m + 1] == "q") {
+        if (r !~ /^ ? ? ?>/) break
+        sub(/^ ? ? ?> ?/, "", r)
+      } else if (r ~ /^ *$/) {
+        r = ""
+      } else {
+        match(r, /^ */)
+        if (RLENGTH < cw[m + 1]) break
+        r = substr(r, cw[m + 1] + 1)
+      }
+    }
+    if (m < depth) {
+      # Any list marker starts a sibling item here: the restriction on
+      # interrupting a paragraph applies only inside its own container.
+      if (leaf == "para" && !interrupts(r) && !list_item(r)) {
+        para[++para_n] = $0
+        next
+      }
+      if (leaf == "fence" && !inquote(m)) r = dedent(r)
+      else { close_leaf(); depth = m }
+    }
+    # 2. Continue the open leaf block.
+    if (leaf == "fence") {
+      fence_run(r)
+      if (run_len && run_char == fence_char && run_len >= fence_len &&
+          run_rest ~ /^ *$/)
+        leaf = ""
+      emit($0)
+      next
+    }
+    if (leaf == "html") {
+      if (tolower(r) ~ html_end) leaf = ""
+      emit($0)
+      next
+    }
+    # 3. Open new containers.
+    while (1) {
+      if (r ~ /^ ? ? ?>/) {
+        close_leaf()
+        ctype[++depth] = "q"
+        sub(/^ ? ? ?> ?/, "", r)
+        continue
+      }
+      w = list_item(r)
+      if (!w || (leaf == "para" && (li_empty || !li_one))) break
+      close_leaf()
+      ctype[++depth] = "l"
+      cw[depth] = w
+      r = li_rest
+    }
+    h = dedent(r)
+    # 4. A paragraph is held until it ends, since an underline below it
+    # turns all of it into a setext heading.
+    if (leaf == "para") {
+      if (h ~ /^(=+|-+) *$/) {
+        heading(para_title, substr(h, 1, 1) == "=" ? 1 : 2)
+        close_leaf()
+        emit($0)
+        next
+      }
+      if (!interrupts(r)) { para[++para_n] = $0; next }
+      close_leaf()
+    }
+    # 5. Start a leaf block.
+    fence_run(r)
+    if (run_len) {
+      leaf = "fence"
+      fence_char = run_char
+      fence_len = run_len
+      emit($0)
+      next
+    }
+    html_end = html_start(h, 0)
+    if (html_end != "") {
+      if (tolower(r) !~ html_end) leaf = "html"
+      emit($0)
+      next
+    }
+    if (h ~ /^##?#?#?#?#?( |$)/) {
+      match(h, /^#+/)
+      level = RLENGTH
+      title = substr(h, level + 1)
+      sub(/^ +/, "", title)
+      heading(title, level)
+    } else if (h !~ /^ *$/ && !thematic(h) && h !~ /^[ |]/) {
+      leaf = "para"
+      para[para_n = 1] = $0
+      para_title = h
+      next
+    }
+    emit($0)
+  }
+  # True when one of the containers past the first m is a block quote.
+  function inquote(m,   i) {
+    for (i = m + 1; i <= depth; i++) if (ctype[i] == "q") return 1
+    return 0
+  }
+  END { close_leaf() }
 ' "$plan" > "$out"
 
 if [ ! -s "$out" ]; then
