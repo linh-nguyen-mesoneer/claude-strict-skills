@@ -1,6 +1,6 @@
 ---
 name: architecture-strict
-description: Use when a task needs an architecture or design decision before any implementation plan - choosing between technologies, patterns, or designs; drawing service, module, or component boundaries; designing a data model, public API, or message contract others will build on; or reviewing a design proposal - and the decision should be recorded as an ADR
+description: Use when a task needs an architecture or design decision before any implementation plan - choosing between technologies, patterns, or designs; drawing service, module, or component boundaries; designing a new data model, public API, or message contract others will build on, where real alternatives exist (adding a field or endpoint inside existing boundaries is not one); or reviewing a design proposal - and the decision should be recorded as an ADR
 ---
 
 # Architecture Decision (Strict)
