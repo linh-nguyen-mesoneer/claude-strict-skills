@@ -6,7 +6,9 @@ set -euo pipefail
 readonly SRC="${SKILLS_SRC:-$HOME/.claude/skills}"
 readonly DEST="$(cd "$(dirname "$0")" && pwd)/plugins/strict-workflow/skills"
 readonly SKILLS=(
-  writing-plans-strict
+  planning-strict
+  architecture-strict
+  investigation-strict
   executing-plans-strict
   subagent-driven-strict
   code-review-strict

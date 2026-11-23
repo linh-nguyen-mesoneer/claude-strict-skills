@@ -11,8 +11,20 @@
 #   --base REF   compare against merge-base(REF, tip); default: the default
 #                branch (origin/HEAD, origin/main, origin/master, main, master)
 #   --head REF   review commits up to REF only; the working tree is excluded
-#   --out FILE   write here; default: a fresh file under $TMPDIR, outside the repo
+#   --out FILE   write here; default: a fresh directory under $TMPDIR, outside
+#                the repo. The reviewer reads the package after this script
+#                exits, so the caller deletes that directory once the review
+#                is over; nothing else removes it.
 #   PATHSPEC     limit the package (relative to the repo root)
+#
+# A changed path whose diff attribute is unset (`package-lock.json -diff`, or
+# the `binary` macro) would show only as "Binary files ... differ". Those paths
+# are diffed with the in-tree .gitattributes ignored, so a real text change
+# shows; content-based binary detection still applies. For them only, eol and
+# filter conversions from .gitattributes are dropped too, so their diff shows
+# raw working-tree bytes. Every other path keeps the normal attributes.
+# `-diff` set in $GIT_DIR/info/attributes or core.attributesFile still hides
+# the change. Needs git >= 2.40; older git warns and honors the attributes.
 #
 # Exit codes: 0 package written, 2 usage or git error, 3 nothing to review.
 # Never touches the working tree, the index, or any ref.
@@ -21,6 +33,9 @@ set -euo pipefail
 readonly CONTEXT_LINES=10
 readonly EXIT_USAGE=2
 readonly EXIT_EMPTY=3
+# First git release that reads GIT_ATTR_SOURCE.
+readonly ATTR_SOURCE_MIN_MAJOR=2
+readonly ATTR_SOURCE_MIN_MINOR=40
 
 die() {
   echo "review-package: $1" >&2
@@ -59,6 +74,30 @@ done
 
 root=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository"
 cd "$root"
+
+git_reads_attr_source() {
+  local version major minor
+  version=$(git version) || return 1
+  version=${version#git version }
+  major=${version%%.*}
+  minor=${version#*.}
+  minor=${minor%%.*}
+  case $major$minor in
+    '' | *[!0-9]*) return 1 ;;
+  esac
+  [ "$major" -gt "$ATTR_SOURCE_MIN_MAJOR" ] ||
+    { [ "$major" -eq "$ATTR_SOURCE_MIN_MAJOR" ] && [ "$minor" -ge "$ATTR_SOURCE_MIN_MINOR" ]; }
+}
+
+# Attribute source for paths marked -diff: the empty tree. Hashing it here
+# yields the id for this repo's object format (SHA-1 or SHA-256). Empty when
+# git cannot read GIT_ATTR_SOURCE; then no path is treated specially.
+empty_tree=""
+if git_reads_attr_source; then
+  empty_tree=$(git hash-object -t tree /dev/null) || die "cannot hash the empty tree"
+else
+  echo "review-package: warning: git older than ${ATTR_SOURCE_MIN_MAJOR}.${ATTR_SOURCE_MIN_MINOR}; files marked -diff in .gitattributes show only as binary" >&2
+fi
 
 resolve_commit() {
   git rev-parse --verify --quiet "$1^{commit}" 2>/dev/null
@@ -116,8 +155,58 @@ if [ -z "$out" ]; then
   out="$(mktemp -d "${tmp_root%/}/review-package.XXXXXX")/review.diff"
 fi
 
+# Changed paths, tracked or untracked, whose diff attribute is unset.
+# Files, not a pipe into the loop, so a failing git command stops the script.
+# Both sides of a rename are listed, so a rename whose two sides are both
+# -diff stays one pair. If only one side is -diff, the pair is split into a
+# delete and an add.
+attr_unset=()
+if [ -n "$empty_tree" ]; then
+  attr_work=$(mktemp -d "${TMPDIR:-/tmp}/review-package-attrs.XXXXXX") || die "cannot create a temp directory"
+  trap 'rm -rf "$attr_work"' EXIT
+  git diff --no-ext-diff --no-renames --name-only -z "${diff_range[@]}" -- ${pathspecs[@]+"${pathspecs[@]}"} \
+    >"$attr_work/paths" || die "git diff --name-only failed"
+  if [ "${#untracked[@]}" -gt 0 ]; then
+    printf '%s\0' "${untracked[@]}" >>"$attr_work/paths" || die "cannot write the path list"
+  fi
+  git check-attr -z --stdin diff <"$attr_work/paths" >"$attr_work/attrs" || die "git check-attr failed"
+  # check-attr -z prints: path NUL attribute NUL value NUL, once per path.
+  while IFS= read -r -d '' path && IFS= read -r -d '' _ && IFS= read -r -d '' value; do
+    if [ "$value" = unset ]; then
+      attr_unset+=("$path")
+    fi
+  done <"$attr_work/attrs"
+fi
+
+is_attr_unset() {
+  local path
+  for path in ${attr_unset[@]+"${attr_unset[@]}"}; do
+    if [ "$path" = "$1" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Paths with the diff attribute unset go in a second diff that ignores the
+# in-tree .gitattributes; all others keep the normal attributes.
+diff_tracked_full() {
+  local path excludes=() literals=()
+  for path in ${attr_unset[@]+"${attr_unset[@]}"}; do
+    excludes+=(":(exclude,literal)$path")
+    literals+=(":(literal)$path")
+  done
+  git diff --no-ext-diff --no-color -U"$CONTEXT_LINES" "${diff_range[@]}" -- \
+    ${pathspecs[@]+"${pathspecs[@]}"} ${excludes[@]+"${excludes[@]}"}
+  if [ "${#literals[@]}" -gt 0 ]; then
+    GIT_ATTR_SOURCE=$empty_tree git diff --no-ext-diff --no-color -U"$CONTEXT_LINES" \
+      "${diff_range[@]}" -- "${literals[@]}"
+  fi
+}
+
 diff_untracked() {
   local path status
+  local diff_new=(git diff --no-ext-diff --no-color --no-index -U"$CONTEXT_LINES" --)
   for path in ${untracked[@]+"${untracked[@]}"}; do
     if [ ! -f "$path" ] || [ -L "$path" ]; then
       echo "(skipped, not a regular file: $path)"
@@ -125,7 +214,11 @@ diff_untracked() {
     fi
     # --no-index exits 1 when the files differ, which is always the case here.
     status=0
-    git diff --no-ext-diff --no-color --no-index -U"$CONTEXT_LINES" -- /dev/null "$path" || status=$?
+    if is_attr_unset "$path"; then
+      GIT_ATTR_SOURCE=$empty_tree "${diff_new[@]}" /dev/null "$path" || status=$?
+    else
+      "${diff_new[@]}" /dev/null "$path" || status=$?
+    fi
     [ "$status" -le 1 ] || die "git diff failed for untracked file: $path"
   done
 }
@@ -149,7 +242,7 @@ diff_untracked() {
   fi
   echo
   echo "## Diff"
-  diff_tracked -U"$CONTEXT_LINES"
+  diff_tracked_full
   diff_untracked
 } >"$out"
 

@@ -9,6 +9,7 @@ You are the controller. Per task: one fresh implementer subagent, then one task 
 
 **Announce:** "I'm using the subagent-driven-strict skill to execute this plan."
 **Precedence:** user > project `CLAUDE.md`/`AGENTS.md` > global `CLAUDE.md` > this skill > the plan.
+**Model:** this main session plans, orchestrates, and audits, so it runs on Opus or a higher tier. On Sonnet or Haiku, stop before Step 0 and ask the user to switch the session's model (`/model` or the app's model picker); on a tier you cannot place relative to Opus, ask the user. Code is written only by implementer subagents.
 **Use `executing-plans-strict` instead** when the plan has ≤ ~5 tasks or its tasks depend on each other so tightly that a fresh subagent would lack needed context.
 
 ## Step 0: Workspace
@@ -33,7 +34,7 @@ You are the controller. Per task: one fresh implementer subagent, then one task 
 
 1. **Record BASE** (`git rev-parse HEAD`) before dispatching.
 2. **Brief:** `bash <this skill>/scripts/task-brief <plan> <N>` prints the brief path. The report path is the same with `-report.md`.
-3. **Dispatch the implementer** with `implementer-prompt.md`. Model: `sonnet` when the brief contains the complete code; `opus` for multi-file integration, design judgment, or any task touching security, money, concurrency, or persisted formats. Never omit the model.
+3. **Dispatch the implementer** with `implementer-prompt.md`. Model: `sonnet` by default; `opus` only for multi-file integration, design judgment the brief does not settle, or any task touching security, money, concurrency, or persisted formats. Never omit the model.
 4. **Handle the status:**
 
 | Status | Action |
@@ -84,6 +85,8 @@ Follow-ups: <Minor and out-of-scope items | none>
 | Thought | Reality |
 |---|---|
 | "Reviewer model doesn't matter for a small diff" | Reviewers are `opus`, named explicitly. |
+| "This fix is one line, I'll just make it" | The controller never writes code; dispatch it. |
+| "The session is on Sonnet, close enough" | Orchestration and audit need Opus or higher; ask the user to switch. |
 | "Unit tests pass; the DB part is mocked anyway" | A boundary task without a passing integration test is not done. |
 | "Implementer self-review is enough" | Self-review never replaces the task review. |
 | "The finding is plan-mandated, skip it" | Plan conflicts go to the user. |

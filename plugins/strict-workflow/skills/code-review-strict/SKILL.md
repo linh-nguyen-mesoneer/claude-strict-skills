@@ -17,7 +17,7 @@ Run the project's verification commands (tests, build, lint, typecheck). Keep ea
 
 ## 2. Build the Review Package
 
-Run `scripts/review-package` (in this skill's directory) from inside the repo. It writes one file outside the repo and prints its path. It never touches the working tree, the index, or any ref.
+Run `scripts/review-package` (in this skill's directory) from inside the repo. It writes one file outside the repo and prints its path. It never touches the working tree, the index, or any ref. Without `--out`, each run creates a new `review-package.*` directory under `$TMPDIR` and nothing deletes it: after the report (Step 6), remove each such directory built for this review (`rm -r "$(dirname <package path>)"`). With `--out`, delete only the file.
 
 | Reviewing | Command |
 |---|---|
@@ -34,7 +34,11 @@ Run `scripts/review-package` (in this skill's directory) from inside the repo. I
 Fill every slot of `code-reviewer-prompt.md` (this directory).
 
 - **Requirements:** the source requirements (ticket text with acceptance criteria and Approach, or the user's request, verbatim) **and** the plan path. The plan is the author's reading of the ticket; a reviewer given only the plan approves a plan that was too narrow.
-- **Rule files:** project and user rule files (`CLAUDE.md`, `AGENTS.md`, contributing docs).
+- **Rule files:** every project and user rule file that governs the changed paths:
+  - `CLAUDE.md` and `.claude/CLAUDE.md` at the repo root, and the user's `~/.claude/CLAUDE.md`;
+  - `AGENTS.md` at the repo root;
+  - nested `CLAUDE.md` and `AGENTS.md` in any directory that holds a changed path, or an ancestor of one (`git ls-files ':(glob)**/CLAUDE.md' ':(glob)**/AGENTS.md'` lists them);
+  - contributing docs: `CONTRIBUTING.md`, `.github/CONTRIBUTING.md`, `docs/CONTRIBUTING.md`.
 - **Model:** always `opus`, named explicitly.
 
 ## 4. Triage

@@ -132,6 +132,100 @@ test_explicit_base_narrows_range() {
   assert_not_contains "$out" "first-commit-marker" "--base drops earlier commit"
 }
 
+test_diff_attribute_does_not_hide_changes() {
+  new_repo attrs
+  printf 'lock.json -diff\n*.lock -diff\n' >.gitattributes
+  echo old-lock >lock.json
+  seq 1 30 >old.lock
+  echo old-spaced >"sp ace.lock"
+  printf 'old\0bin' >blob.dat
+  git add .
+  git commit -qm "attributes"
+  git checkout -qb feature
+  echo committed-lock-marker >lock.json
+  git mv old.lock new.lock
+  echo renamed-lock-marker >>new.lock
+  echo spaced-lock-marker >"sp ace.lock"
+  git commit -qam "lock"
+  printf 'new\0bin' >blob.dat
+  echo 'untracked.json -diff' >>.gitattributes
+  echo untracked-lock-marker >untracked.json
+  local out="$work/attrs.diff" head_out="$work/attrs-head.diff" spec_out="$work/attrs-spec.diff"
+  bash "$pkg" --base main --out "$out" >/dev/null
+  bash "$pkg" --base main --head HEAD --out "$head_out" >/dev/null
+  bash "$pkg" --base main --out "$spec_out" -- "sp ace.lock" >/dev/null
+  assert_contains "$out" "committed-lock-marker" "-diff attribute on a tracked file"
+  assert_contains "$out" "untracked-lock-marker" "-diff attribute on an untracked file"
+  assert_contains "$out" "spaced-lock-marker" "-diff attribute on a path with a space"
+  assert_contains "$out" "rename from old.lock" "renamed -diff file stays a rename"
+  assert_contains "$out" "renamed-lock-marker" "renamed -diff file shows its change"
+  assert_contains "$head_out" "committed-lock-marker" "-diff attribute with --head"
+  assert_contains "$spec_out" "spaced-lock-marker" "pathspec keeps the matching -diff file"
+  assert_not_contains "$spec_out" "committed-lock-marker" "pathspec drops other -diff files"
+  assert_contains "$out" "Binary files a/blob.dat and b/blob.dat differ" "genuine binary still detected"
+}
+
+test_eol_conversion_kept_for_other_files() {
+  new_repo eol
+  echo '*.txt text eol=crlf' >.gitattributes
+  printf 'eol-1\neol-2\neol-3\n' >crlf.txt
+  # Silences git's "LF will be replaced by CRLF" notice for the setup files.
+  git -c core.safecrlf=false add .
+  git commit -qm "crlf"
+  # Recheck out so the working tree holds CRLF, as a real checkout would.
+  rm crlf.txt
+  git checkout -- crlf.txt
+  git checkout -qb feature
+  printf 'eol-1\r\nEOL-2\r\neol-3\r\n' >crlf.txt
+  local out="$work/eol.diff"
+  bash "$pkg" --base main --out "$out" >/dev/null 2>&1
+  assert_contains "$out" "+EOL-2" "eol=crlf file shows its change"
+  assert_not_contains "$out" "+eol-1" "eol=crlf file is not rewritten whole"
+}
+
+# Puts a `git` on PATH that runs $2 (shell code) first, then the real git.
+make_git_shim() {
+  local dir=$1 real_git
+  real_git=$(command -v git)
+  mkdir "$dir"
+  {
+    echo '#!/usr/bin/env bash'
+    echo "$2"
+    echo "exec \"$real_git\" \"\$@\""
+  } >"$dir/git"
+  chmod +x "$dir/git"
+}
+
+test_old_git_warns_and_still_writes() {
+  new_feature_repo oldgit
+  local shim="$work/oldgit-bin" out="$work/oldgit.diff" code=0
+  # Reports a pre-2.40 version, as Apple Git does.
+  make_git_shim "$shim" 'if [ "$1" = version ]; then echo "git version 2.39.5 (Apple Git-154)"; exit 0; fi'
+  PATH="$shim:$PATH" bash "$pkg" --out "$out" >"$work/oldgit.out" 2>&1 || code=$?
+  assert_eq "$code" "0" "old git still writes a package"
+  assert_contains "$work/oldgit.out" "warning: git older than 2.40" "old git warns"
+  assert_contains "$out" "first-commit-marker" "old git package content"
+}
+
+test_check_attr_failure_exits_2() {
+  new_feature_repo attrfail
+  local shim="$work/attrfail-bin" code=0
+  make_git_shim "$shim" 'if [ "$1" = check-attr ]; then exit 1; fi'
+  PATH="$shim:$PATH" bash "$pkg" --out "$work/attrfail.diff" >"$work/attrfail.out" 2>&1 || code=$?
+  assert_eq "$code" "2" "failing git check-attr is an error"
+  assert_contains "$work/attrfail.out" "review-package: git check-attr failed" "failing git check-attr is reported"
+}
+
+test_changed_paths_failure_exits_2() {
+  new_feature_repo namefail
+  local shim="$work/namefail-bin" code=0
+  # Only the attribute pass lists names with --no-renames.
+  make_git_shim "$shim" 'for arg; do if [ "$arg" = --no-renames ]; then exit 128; fi; done'
+  PATH="$shim:$PATH" bash "$pkg" --out "$work/namefail.diff" >"$work/namefail.out" 2>&1 || code=$?
+  assert_eq "$code" "2" "failing git diff --name-only is an error"
+  assert_contains "$work/namefail.out" "review-package: git diff --name-only failed" "failing git diff --name-only is reported"
+}
+
 test_nothing_to_review_exits_3() {
   new_repo clean
   local out="$work/clean.diff"
@@ -160,6 +254,11 @@ test_default_outfile_is_outside_repo
 test_pathspec_limits_package
 test_head_excludes_working_tree
 test_explicit_base_narrows_range
+test_diff_attribute_does_not_hide_changes
+test_eol_conversion_kept_for_other_files
+test_old_git_warns_and_still_writes
+test_check_attr_failure_exits_2
+test_changed_paths_failure_exits_2
 test_nothing_to_review_exits_3
 test_bad_base_exits_2
 test_unknown_option_exits_2

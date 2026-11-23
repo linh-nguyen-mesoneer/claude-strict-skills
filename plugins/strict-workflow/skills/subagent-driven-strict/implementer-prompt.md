@@ -1,6 +1,6 @@
 # Implementer Prompt Template
 
-Dispatch per task (subagent-driven-strict, Step 2.3) and for fix rounds. Fill every bracket.
+Dispatch per task (subagent-driven-strict, Step 2.3), per batch (executing-plans-strict, Step 2.3), and for fix rounds. Fill every bracket. subagent-driven-strict sends it as an `Agent` subagent; executing-plans-strict sends the `prompt` body as a sub-session brief (its "Dispatching the implementer") and keeps the Session-only lines.
 
 ```
 Subagent (general-purpose):
@@ -8,6 +8,7 @@ Subagent (general-purpose):
   model: [sonnet | opus — per SKILL.md Step 2.3, never omitted]
   prompt: |
     You are implementing Task [N]: [name]. Work only in [REPO_OR_WORKTREE_PATH].
+    [Session only: You are an implementer sub-session started by the orchestrating session, not the user-facing main session. Do not invoke `executing-plans-strict`, `subagent-driven-strict`, `planning-strict`, `architecture-strict`, `investigation-strict`, or `finishing-branch-strict`, and do not start other sessions; the global rule that the main session must run on Opus does not apply to you. Ask the user nothing about the plan: report NEEDS_CONTEXT or BLOCKED instead.]
 
     **Read first — your requirements, exact values verbatim:** [BRIEF_FILE]
     **Where this fits:** [one line]
@@ -18,6 +19,7 @@ Subagent (general-purpose):
     **Commits:** [commit per task in format <...> | do NOT commit; leave changes in the working tree]
     **Report file:** [REPORT_FILE]
     [Fix round only: **Findings to fix:** <full list>; **Covering tests:** <files>]
+    [Batch only: **Batch:** <brief paths in task order>. Do the tasks in this order, each through Do steps 1–5 before the next; stop at the first task you cannot finish as DONE. Write one report section per task, and give one Status line per task in the final message.]
 
     ## Before you start
     Unclear requirement, approach, or assumption → stop now and report NEEDS_CONTEXT with the exact question. Never guess a business rule.
@@ -38,7 +40,9 @@ Subagent (general-purpose):
     ## Report
     Write to [REPORT_FILE] (append in fix rounds): what you built; files changed; RED (command, failing output, why expected; or the behavior-preserving before-run, or the no-executable-behavior check); GREEN (command, passing output); integration tests (command, counts | "not a boundary task"); full-suite command and result; self-review findings; concerns.
 
-    Final message, under 15 lines:
+    [Session only: Also append the final message below to [REPORT_FILE] under a `## Final status` heading (a new heading per fix round); the orchestrator reads it there.]
+
+    Final message, under 15 lines (a batch: plus one line per task after the first):
     - **Status:** DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED
     - Commits (short SHA + subject) | "uncommitted"
     - Tests: one line with unit and integration counts
